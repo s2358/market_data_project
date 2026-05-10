@@ -1,18 +1,14 @@
+from query_prices import get_all_yahoo_instruments
 from ingest_yahoo_prices import update_missing_yahoo_prices
 
 
 if __name__ == "__main__":
-    update_missing_yahoo_prices(
-        db_symbol="AAPL",
-        yahoo_symbol="AAPL",
-    )
+    instruments_df = get_all_yahoo_instruments()
 
-    update_missing_yahoo_prices(
-        db_symbol="EURUSD",
-        yahoo_symbol="EURUSD=X",
-    )
+    for _, row in instruments_df.iterrows():
+        print(f"\nUpdating {row['symbol']}...")
 
-    update_missing_yahoo_prices(
-    db_symbol="SPY",
-    yahoo_symbol="SPY",
-    )
+        update_missing_yahoo_prices(
+            db_symbol=row["symbol"],
+            yahoo_symbol=row["yahoo_symbol"],
+        )

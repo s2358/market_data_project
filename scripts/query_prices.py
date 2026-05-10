@@ -3,9 +3,65 @@ from pathlib import Path
 
 import pandas as pd
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = _PROJECT_ROOT / "data" / "market_data.sqlite"
 
-DB_PATH = Path("data/market_data.sqlite")
 
+def get_instrument_symbols():
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT symbol
+            FROM instruments
+            ORDER BY symbol;
+            """
+        )
+        return [row[0] for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_instrument_symbol_name_map():
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT symbol, name
+            FROM instruments;
+            """
+        )
+        return {
+            row[0]: (row[1] or "").strip()
+            for row in cursor.fetchall()
+        }
+    finally:
+        conn.close()
+
+
+def get_all_yahoo_instruments():
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        query = """
+        SELECT
+            symbol,
+            yahoo_symbol
+        FROM instruments
+        WHERE yahoo_symbol IS NOT NULL
+        ORDER BY symbol;
+        """
+
+        df = pd.read_sql_query(query, conn)
+
+        return df
+
+    finally:
+        conn.close()
 
 def get_prices(symbol, start_date=None, end_date=None, source_name="yahoo"):
     conn = sqlite3.connect(DB_PATH)

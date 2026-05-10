@@ -11,12 +11,27 @@ except ImportError:
     st_autorefresh = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from analytics.moving_average import calculate_ma_signal
 from analytics.returns import calculate_return_std_dev
-from scripts.query_prices import get_prices
+
+_query_prices_path = SCRIPTS_DIR / "query_prices.py"
+_query_prices_spec = importlib.util.spec_from_file_location(
+    "market_data_query_prices",
+    _query_prices_path,
+)
+if _query_prices_spec is None or _query_prices_spec.loader is None:
+    raise ImportError(f"Cannot load query_prices from {_query_prices_path}")
+_query_prices = importlib.util.module_from_spec(_query_prices_spec)
+_query_prices_spec.loader.exec_module(_query_prices)
+
+get_instrument_symbols = _query_prices.get_instrument_symbols
+get_instrument_symbol_name_map = _query_prices.get_instrument_symbol_name_map
+get_prices = _query_prices.get_prices
 
 PORTFOLIO_SIZING_PATH = PROJECT_ROOT / "portfolio" / "sizing.py"
 portfolio_spec = importlib.util.spec_from_file_location(
@@ -66,23 +81,30 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Market Data Dashboard")
+db_symbols = get_instrument_symbols()
+
+if not db_symbols:
+    st.error(
+        "No instruments found in the database. "
+        "Create the DB and run `python scripts/insert_instruments.py` from the project root."
+    )
+    st.stop()
 
 symbol = st.sidebar.selectbox(
     "Symbol",
-    ["AAPL", "SPY", "EURUSD"],
+    db_symbols,
 )
 
 symbols_for_table = st.sidebar.multiselect(
     "Symbols for volatility table",
-    ["AAPL", "SPY", "EURUSD"],
-    default=["AAPL", "SPY", "EURUSD"],
+    db_symbols,
+    default=list(db_symbols),
 )
 
 portfolio_symbols = st.sidebar.multiselect(
     "Symbols for portfolio sizing",
-    ["AAPL", "SPY", "EURUSD"],
-    default=["AAPL", "SPY", "EURUSD"],
+    db_symbols,
+    default=list(db_symbols),
 )
 
 sgd_to_usd_rate = st.sidebar.number_input(
@@ -157,14 +179,21 @@ if should_run_tests:
     st.session_state["last_test_ran_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state["last_test_mtime"] = current_mtime
 
-st.subheader("Automated test results")
-if st.session_state["last_test_ok"] is None:
-    st.info("No test run yet. Use 'Run tests now' or enable auto-run on code change.")
-elif st.session_state["last_test_ok"]:
-    st.success(f"Tests passed. Last run: {st.session_state['last_test_ran_at']}")
-else:
-    st.error(f"Tests failed. Last run: {st.session_state['last_test_ran_at']}")
-st.code(st.session_state["last_test_output"], language="text")
+header_left_col, header_right_col = st.columns([0.78, 0.22])
+with header_left_col:
+    st.title("Market Data Dashboard")
+
+with header_right_col:
+    st.markdown("##### Tests")
+    if st.session_state["last_test_ok"] is None:
+        st.caption("Not run")
+    elif st.session_state["last_test_ok"]:
+        st.caption("Passed")
+    else:
+        st.caption("Failed")
+    st.caption(f"Last run: {st.session_state['last_test_ran_at'] or '-'}")
+    with st.expander("Details", expanded=False):
+        st.code(st.session_state["last_test_output"], language="text")
 
 df = get_prices(
     symbol=symbol,
@@ -172,30 +201,13 @@ df = get_prices(
     end_date=end_date.strftime("%Y-%m-%d"),
 )
 
-st.subheader(f"{symbol} price data")
-
-if df.empty:
-    st.warning("No data found.")
-else:
-    st.write(
-        f"Rows: {len(df)} | "
-        f"From: {df['price_date'].min().date()} | "
-        f"To: {df['price_date'].max().date()}"
-    )
-
-    chart_df = df.set_index("price_date")[["close", "adjusted_close"]]
-
-    st.line_chart(chart_df)
-
-    st.subheader("Raw data")
-    st.dataframe(df, use_container_width=True)
-
 st.subheader("Standard deviation of returns")
 st.caption("Values shown are latest 25-day rolling standard deviations of daily returns.")
 
 if not symbols_for_table:
     st.info("Select at least one symbol to populate the volatility table.")
 else:
+    symbol_name_map = get_instrument_symbol_name_map()
     table_rows = []
 
     for table_symbol in symbols_for_table:
@@ -207,6 +219,7 @@ else:
 
         row = {
             "symbol": table_symbol,
+            "name": symbol_name_map.get(table_symbol, ""),
             "rolling_25d_std_dev": None,
             "rolling_25d_annualized_std_dev": None,
             "status": "ok",
@@ -434,3 +447,21 @@ else:
             st.dataframe(signal_history, use_container_width=True)
     except Exception as exc:
         st.warning(str(exc))
+
+st.subheader(f"{symbol} price data")
+
+if df.empty:
+    st.warning("No data found.")
+else:
+    st.write(
+        f"Rows: {len(df)} | "
+        f"From: {df['price_date'].min().date()} | "
+        f"To: {df['price_date'].max().date()}"
+    )
+
+    chart_df = df.set_index("price_date")[["close", "adjusted_close"]]
+
+    st.line_chart(chart_df)
+
+    st.subheader("Raw data")
+    st.dataframe(df, use_container_width=True)
